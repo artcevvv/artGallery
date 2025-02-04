@@ -1,5 +1,11 @@
 package com.example;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -7,101 +13,140 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
 public class ArtGallerySystem {
     private static final String URL = "jdbc:postgresql://localhost:5432/artGallery";
     private static final String USER = "artGalleryUser";
     private static final String PASSWORD = "1234";
 
-    public static void main(String[] args) {
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
-            System.out.println("Connected to PostgreSQL database!");
+    public static void main(String[] args) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
 
-            createTables(conn);
+        server.createContext("/artists", new ArtistHandler());
+        server.createContext("/artworks", new ArtworkHandler());
 
-            int artistId = insertArtist(conn, "Pablo Picasso", "Cubism");
-            insertArtwork(conn, "Guernica", "Painting", artistId);
-
-            readArtists(conn);
-
-            // Update data
-            // updateArtist(conn, artistId, "Modern Cubism");
-
-            // Delete data
-            // deleteArtist(conn, artistId);
-
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
+        server.setExecutor(null);
+        server.start();
+        System.out.println("Server started on port 8080...");
     }
 
-    private static void createTables(Connection conn) throws SQLException {
-        String sqlArtists = "CREATE TABLE IF NOT EXISTS artists ("
-                + "id SERIAL PRIMARY KEY, "
-                + "name VARCHAR(255) NOT NULL, "
-                + "style VARCHAR(255) NOT NULL)";
+    static class ArtistHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String method = exchange.getRequestMethod();
 
-        String sqlArtworks = "CREATE TABLE IF NOT EXISTS artworks ("
-                + "id SERIAL PRIMARY KEY, "
-                + "title VARCHAR(255) NOT NULL, "
-                + "medium VARCHAR(100) NOT NULL, "
-                + "artist_id INT, "
-                + "FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE)";
-
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute(sqlArtists);
-            stmt.execute(sqlArtworks);
-        }
-    }
-
-    private static int insertArtist(Connection conn, String name, String style) throws SQLException {
-        String sql = "INSERT INTO artists (name, style) VALUES (?, ?) RETURNING id";
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, name);
-            pstmt.setString(2, style);
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                return rs.getInt(1);
+            switch (method) {
+                case "GET":
+                    handleGetArtists(exchange);
+                    break;
+                case "POST":
+                    handleCreateArtist(exchange);
+                    break;
+                default:
+                    sendResponse(exchange, 405, "Method Not Allowed");
             }
         }
-        return -1;
-    }
 
-    private static void insertArtwork(Connection conn, String title, String medium, int artistId) throws SQLException {
-        String sql = "INSERT INTO artworks (title, medium, artist_id) VALUES (?, ?, ?)";
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, title);
-            pstmt.setString(2, medium);
-            pstmt.setInt(3, artistId);
-            pstmt.executeUpdate();
+        private void handleGetArtists(HttpExchange exchange) throws IOException {
+            JSONArray artists = new JSONArray();
+            try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+                    Statement stmt = conn.createStatement();
+                    ResultSet rs = stmt.executeQuery("SELECT * FROM artists")) {
+
+                while (rs.next()) {
+                    JSONObject artist = new JSONObject();
+                    artist.put("id", rs.getInt("id"));
+                    artist.put("name", rs.getString("name"));
+                    artist.put("style", rs.getString("style"));
+                    artists.put(artist);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "Database Error");
+                return;
+            }
+            sendResponse(exchange, 200, artists.toString());
         }
-    }
 
-    private static void readArtists(Connection conn) throws SQLException {
-        String sql = "SELECT * FROM artists";
-        try (Statement stmt = conn.createStatement();
-            ResultSet rs = stmt.executeQuery(sql)) {
-            while (rs.next()) {
-                System.out.println("ID: " + rs.getInt("id") +
-                        ", Name: " + rs.getString("name") +
-                        ", Style: " + rs.getString("style"));
+        private void handleCreateArtist(HttpExchange exchange) throws IOException {
+            String requestBody = readRequestBody(exchange);
+            JSONObject json = new JSONObject(requestBody);
+
+            String name = json.getString("name");
+            String style = json.getString("style");
+
+            try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+                    PreparedStatement pstmt = conn.prepareStatement(
+                            "INSERT INTO artists (name, style) VALUES (?, ?) RETURNING id")) {
+                pstmt.setString(1, name);
+                pstmt.setString(2, style);
+                ResultSet rs = pstmt.executeQuery();
+                if (rs.next()) {
+                    int artistId = rs.getInt("id");
+                    sendResponse(exchange, 201, "{\"id\":" + artistId + "}");
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "Database Error");
             }
         }
     }
 
-    private static void updateArtist(Connection conn, int id, String newStyle) throws SQLException {
-        String sql = "UPDATE artists SET style = ? WHERE id = ?";
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, newStyle);
-            pstmt.setInt(2, id);
-            pstmt.executeUpdate();
+    static class ArtworkHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                handleCreateArtwork(exchange);
+            } else {
+                sendResponse(exchange, 405, "Method Not Allowed");
+            }
+        }
+
+        private void handleCreateArtwork(HttpExchange exchange) throws IOException {
+            String requestBody = readRequestBody(exchange);
+            JSONObject json = new JSONObject(requestBody);
+
+            String title = json.getString("title");
+            String medium = json.getString("medium");
+            int artistId = json.getInt("artist_id");
+
+            try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+                    PreparedStatement pstmt = conn.prepareStatement(
+                            "INSERT INTO artworks (title, medium, artist_id) VALUES (?, ?, ?)")) {
+                pstmt.setString(1, title);
+                pstmt.setString(2, medium);
+                pstmt.setInt(3, artistId);
+                pstmt.executeUpdate();
+                sendResponse(exchange, 201, "{\"message\":\"Artwork created\"}");
+            } catch (SQLException e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "Database Error");
+            }
         }
     }
 
-    private static void deleteArtist(Connection conn, int id) throws SQLException {
-        String sql = "DELETE FROM artists WHERE id = ?";
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setInt(1, id);
-            pstmt.executeUpdate();
+    private static String readRequestBody(HttpExchange exchange) throws IOException {
+        InputStream inputStream = exchange.getRequestBody();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line);
         }
+        return sb.toString();
+    }
+
+    private static void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(statusCode, response.getBytes().length);
+        OutputStream os = exchange.getResponseBody();
+        os.write(response.getBytes());
+        os.close();
     }
 }

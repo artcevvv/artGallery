@@ -1,4 +1,6 @@
+com\example\ArtGallerySystem$ArtistHandler.class
 com\example\Artwork.class
 com\example\ArtGallerySystem.class
 com\example\ArtGallery.class
+com\example\ArtGallerySystem$ArtworkHandler.class
 com\example\Artist.class
