@@ -42,14 +42,9 @@ public class ArtGallerySystem {
             String method = exchange.getRequestMethod();
 
             switch (method) {
-                case "GET":
-                    handleGetArtists(exchange);
-                    break;
-                case "POST":
-                    handleCreateArtist(exchange);
-                    break;
-                default:
-                    sendResponse(exchange, 405, "Method Not Allowed");
+                case "GET" -> handleGetArtists(exchange);
+                case "POST" -> handleCreateArtist(exchange);
+                default -> sendResponse(exchange, 405, "Method Not Allowed");
             }
         }
 
@@ -67,7 +62,6 @@ public class ArtGallerySystem {
                     artists.put(artist);
                 }
             } catch (SQLException e) {
-                e.printStackTrace();
                 sendResponse(exchange, 500, "Database Error");
                 return;
             }
@@ -92,7 +86,6 @@ public class ArtGallerySystem {
                     sendResponse(exchange, 201, "{\"id\":" + artistId + "}");
                 }
             } catch (SQLException e) {
-                e.printStackTrace();
                 sendResponse(exchange, 500, "Database Error");
             }
         }
@@ -101,10 +94,12 @@ public class ArtGallerySystem {
     static class ArtworkHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            if ("POST".equals(exchange.getRequestMethod())) {
-                handleCreateArtwork(exchange);
-            } else {
-                sendResponse(exchange, 405, "Method Not Allowed");
+            String method = exchange.getRequestMethod();
+
+            switch (method) {
+                case "POST" -> handleCreateArtwork(exchange);
+                case "GET" -> handleGetArtwork(exchange);
+                default -> sendResponse(exchange, 405, "Method Not Allowed");
             }
         }
 
@@ -125,10 +120,29 @@ public class ArtGallerySystem {
                 pstmt.executeUpdate();
                 sendResponse(exchange, 201, "{\"message\":\"Artwork created\"}");
             } catch (SQLException e) {
-                e.printStackTrace();
                 sendResponse(exchange, 500, "Database Error");
             }
         }
+    }
+
+    private static void handleGetArtwork(HttpExchange exchange) throws IOException {
+        JSONArray artworks = new JSONArray();
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT * FROM artworks")) {
+
+            while (rs.next()) {
+                JSONObject artwork = new JSONObject();
+                artwork.put("id", rs.getInt("id"));
+                artwork.put("name", rs.getString("name"));
+                artwork.put("style", rs.getString("style"));
+                artworks.put(artwork);
+            }
+        } catch (SQLException e) {
+            sendResponse(exchange, 500, "Database Error");
+            return;
+        }
+        sendResponse(exchange, 200, artworks.toString());
     }
 
     private static String readRequestBody(HttpExchange exchange) throws IOException {
@@ -145,8 +159,8 @@ public class ArtGallerySystem {
     private static void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(statusCode, response.getBytes().length);
-        OutputStream os = exchange.getResponseBody();
-        os.write(response.getBytes());
-        os.close();
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(response.getBytes());
+        }
     }
 }

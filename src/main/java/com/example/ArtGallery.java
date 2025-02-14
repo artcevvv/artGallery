@@ -40,8 +40,7 @@ public class ArtGallery {
 
     @Override
     public String toString() {
-        return "ArtGallery:\n" +
-                "Name of the Gallery: '" + name + "\n" +
-                "Artworks: " + artworks;
+        return "{ \"name\": \"" + name + "\", \"artworks\": " + artworks + " }";
     }
+
 }
